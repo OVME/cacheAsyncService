@@ -1,0 +1,55 @@
+Class ThreadPool.Request Extends (%Persistent, %XML.Adaptor)
+{
+
+Property RequestString As %String(TRUNCATE = 1);
+
+Property RequestStatus As %String(TRUNCATE = 1, VALUELIST = ",WAITING,IN_STACK,RUNNING,READY,READY_WITH_ERROR", XMLPROJECTION = "ELEMENT");
+
+Property AddedTime As %String;
+
+Property HandledTime As %String;
+
+Property ErrorData As %String;
+
+Property Result As %String(MAXLEN = "");
+
+Query GetWaiting() As %SQLQuery(CONTAINID = 1) [ SqlProc ]
+{
+SELECT %ID FROM Request
+ WHERE (RequestStatus = 'WAITING')
+ ORDER BY %ID
+}
+
+<Storage name="Default">
+<Data name="RequestDefaultData">
+<Value name="1">
+<Value>%%CLASSNAME</Value>
+</Value>
+<Value name="2">
+<Value>RequestString</Value>
+</Value>
+<Value name="3">
+<Value>RequestStatus</Value>
+</Value>
+<Value name="4">
+<Value>AddedTime</Value>
+</Value>
+<Value name="5">
+<Value>HandledTime</Value>
+</Value>
+<Value name="6">
+<Value>ErrorData</Value>
+</Value>
+<Value name="7">
+<Value>Result</Value>
+</Value>
+</Data>
+<DataLocation>^ThreadPool.RequestD</DataLocation>
+<DefaultData>RequestDefaultData</DefaultData>
+<ExtentSize>100000</ExtentSize>
+<IdLocation>^ThreadPool.RequestD</IdLocation>
+<IndexLocation>^ThreadPool.RequestI</IndexLocation>
+<StreamLocation>^ThreadPool.RequestS</StreamLocation>
+<Type>%Library.CacheStorage</Type>
+</Storage>
+}

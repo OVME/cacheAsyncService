@@ -1,0 +1,138 @@
+/// ThreadPool.ThreadPoolService
+Class ThreadPool.ThreadPoolService Extends %SOAP.WebService [ ProcedureBlock ]
+{
+
+///  Имя Веб-Сервиса.
+Parameter SERVICENAME = "ThreadPoolService";
+
+/// TODO: change this to actual SOAP namespace.
+/// Область SOAP для Веб-Сервиса
+Parameter NAMESPACE = "http://tempuri.org";
+
+/// Пространство имен задействованных классов будет использовано в WSDL.
+Parameter USECLASSNAMESPACES = 1;
+
+Method GetRId(ReqString As %String) As %String [ WebMethod ]
+{
+	if ^ThreadPoolData("Initialized") '= 1 
+	{
+	   q "Pool isn't initialized"
+	}
+	set result = ""
+	try
+	{
+		set req = ##class(ThreadPool.Request).%New()
+		set req.RequestString = ReqString
+		set req.RequestStatus = "WAITING"
+		set req.AddedTime = $HOROLOG
+		tstart		
+		
+		$$$TOE(sc, req.%Save())
+		
+		set result = req.%Id()
+		tcommit
+		
+		if ^ThreadPoolSettings("Settings","Reaction") = 1
+		{
+		JOB $CLASSMETHOD("ThreadPool.Handler","JobForEach",req.%Id())::10
+		}
+	}
+	catch ex
+	{
+		trollback
+		do ..ReturnFault(..MakeStatusFault(ex.AsStatus()))
+	}
+	quit result
+}
+
+Method Status(id As %Integer) As %String [ WebMethod ]
+{
+	set res = ""	
+	try
+	{
+		set req = ##class(ThreadPool.Request).%OpenId(id)
+		if req = ""
+		{
+			THROW ##class(%Exception.General).%New("<BAD OID>","001",,"Object with id = "_id_" wasn't found")
+		}
+		set res = req.RequestStatus
+		
+	} 
+	catch ex
+	{
+		
+			set detail=ex.Data
+        	set fault=..MakeFault($$$FAULTServer,"Status error",detail)
+		
+		
+		do ..ReturnFault(fault)		
+	}
+	
+	q res
+}
+
+Method Result(id As %Integer) As %String [ WebMethod ]
+{
+	set res = ""	
+	try
+	{
+		set req = ##class(ThreadPool.Request).%OpenId(id)
+		if req = ""
+		{
+			THROW ##class(%Exception.General).%New("<BAD OID>","001",,"Object with id = "_id_" wasn't found")
+		}
+		if req.RequestStatus="READY"
+		{
+			set res = req.Result
+		}
+		else 
+		{
+			THROW ##class(%Exception.General).%New("<BAD STATUS>","002",,"Object with id = "_id_" isn't ready")
+		}			
+		
+	} 
+	catch ex
+	{
+		
+			set detail=ex.Data     	
+		
+		
+		set fault=..MakeFault($$$FAULTServer,"Result error",detail)
+		do ..ReturnFault(fault)		
+	}
+	q res
+}
+
+Method GetFullRequest(id As %Integer) As ThreadPool.Request [ WebMethod ]
+{
+	set res = ""	
+	try
+	{
+		set req = ##class(ThreadPool.Request).%OpenId(id)
+		if req = ""
+		{
+			THROW ##class(%Exception.General).%New("<BAD OID>","001",,"Object with id = "_id_" wasn't found")
+		}
+
+			set res = req
+			
+		
+	} 
+	catch ex
+	{
+		
+			set detail=ex.Data()     	
+		
+		
+		set fault=..MakeFault($$$FAULTServer,"Result error",detail)
+		do ..ReturnFault(fault)		
+	}
+	q res
+}
+
+Method GetProcTaskData() As %String [ WebMethod ]
+{
+	q ^ThreadPoolData("ThreadsCount")_","_^ThreadPoolData("TasksCount")
+}
+
+}

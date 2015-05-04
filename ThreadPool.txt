@@ -1,0 +1,191 @@
+Class ThreadPool.ThreadPool Extends %RegisteredObject
+{
+
+ClassMethod Start() As %String
+{
+	
+	   if ^ThreadPoolData("Initialized") '= 1 
+	  { q "Pool isn't initialized" }
+	   set ^ThreadPoolData("stop") = ""
+	   w "Done"
+	   
+	   
+	if ^ThreadPoolSettings("Settings","Reaction") = 2
+	{
+	if ^ThreadPoolSettings("Settings","MethodNumber") = 1
+	{
+		
+		JOB $CLASSMETHOD("ThreadPool.ThreadPool","JobsStart")::10
+		if $TEST = 0
+			{
+				q "job did not run"
+				
+			}
+		  	set ^ThreadPoolData("pid") = $ZCHILD
+		 	q "Done"
+		 		
+
+	}
+	
+	if ^ThreadPoolSettings("Settings","MethodNumber") = 2
+	{
+		
+		if $DATA(^$JOB(^ThreadPoolData("pid"))) = 0
+	 	{
+		 	LOCK ^JL
+		 	JOB $CLASSMETHOD("ThreadPool.Handler","JobForAll")::10
+		
+		 
+		 	if $TEST = 0
+			{
+				q "job did not run"
+				LOCK
+			}
+		  	set ^ThreadPoolData("pid") = $ZCHILD
+		 	q "Done"
+		 	LOCK		 
+		 
+	 	}
+	 	q "Handler is already created"
+	}
+	
+	if ^ThreadPoolSettings("Settings","MethodNumber") = 3{
+	JOB $CLASSMETHOD("ThreadPool.Handler","StackManage")::10
+	
+	
+	if ^ThreadPoolSettings("Settings","DynamicManaging") = 0{
+	FOR i = 1:1:^ThreadPoolSettings("Settings","ThreadsNum")
+	{
+		JOB $CLASSMETHOD("ThreadPool.Handler","JobStack",0)::10
+	}
+	}
+	
+	if ^ThreadPoolSettings("Settings","DynamicManaging") = 1
+	{
+	set ^ThreadPoolData("ThreadsCount") = 0
+	set ^ThreadPoolData("TasksCount") = 0	
+	FOR i = 1:1:^ThreadPoolSettings("Settings","MinThreadNum")
+	{
+		JOB $CLASSMETHOD("ThreadPool.Handler","JobStack",1)::10
+	}
+	
+	LOCK +^ThreadPoolData("ThreadsCount")
+	set ^ThreadPoolData("ThreadsCount") = ^ThreadPoolData("ThreadsCount")+^ThreadPoolSettings("Settings","MinThreadNum")
+	LOCK -^ThreadPoolData("ThreadsCount")
+	JOB $CLASSMETHOD("ThreadPool.Handler","JobManaging")::10
+	
+	}
+	
+	
+	
+	
+	}
+	
+	}
+	else 
+	{
+		q "Error. Bad reaction"
+	}
+}
+
+ClassMethod Stop()
+{
+	   set ^ThreadPoolData("stop") = "STOP"
+}
+
+ClassMethod SetReaction(rnum As %Integer)
+{
+	if (rnum>0) && (rnum<4){
+		set ^ThreadPoolSettings("Settings","Reaction") = rnum}
+	else {
+		set ^ThreadPoolSettings("Settings","Reaction") = 1}
+}
+
+ClassMethod SetMethod(mnum As %Integer)
+{
+	if (mnum>0) && (mnum<4)
+	{	set ^ThreadPoolSettings("Settings","MethodNumber") = mnum}
+	else 
+		{set ^ThreadPoolSettings("Settings","MethodNumber") = 1}
+}
+
+ClassMethod Initialize()
+{
+		set ^ThreadPoolData("stop") = "STOP"
+		set ^ThreadPoolSettings("Settings","MethodNumber") = 1
+		set ^ThreadPoolSettings("Settings","Reaction") = 0
+		set ^ThreadPoolSettings("Settings","ThreadsNum") = 1
+		set ^ThreadPoolData("Log") = ""
+		set ^ThreadPoolData("ErrorLog") = ""
+		set ^ThreadPoolData("pid") = 0 
+		set ^ThreadPoolData("Initialized") = 1
+		set ^ThreadPoolData("Tasks") = ""
+		set ^ThreadPoolData("TasksCount") = 0
+		set ^ThreadPoolData("ThreadsCount") = 0
+		set ^ThreadPoolData("ThreadsCount") = 0
+		set ^ThreadPoolSettings("Settings","MinThreadNum") = 1
+		set ^ThreadPoolSettings("Settings","MaxThreadNum") = 1
+		set ^ThreadPoolSettings("Settings","DynamicThreadLifeTime") = 1000
+}
+
+ClassMethod SetThreadsNum(tnum As %Integer)
+{
+	if tnum>0
+	{	set ^ThreadPoolSettings("Settings","ThreadsNum") = tnum}
+	else 
+	{	set ^ThreadPoolSettings("Settings","ThreadsNum") = 1}
+}
+
+ClassMethod SetDynamicThreadManaging(i As %Integer)
+{
+	if (i=0)||(i=1)
+	{	set ^ThreadPoolSettings("Settings","DynamicManaging") = i}
+	else 
+	{	set ^ThreadPoolSettings("Settings","DynamicManaging") = 0}
+}
+
+ClassMethod SetMaximumThreadsNum(i As %Integer)
+{
+	if i>0
+	{	set ^ThreadPoolSettings("Settings","MaxThreadNum") = i}
+	else 
+	{	set ^ThreadPoolSettings("Settings","MaxThreadNum") = 1}
+}
+
+ClassMethod SetMinimumThreadsNum(i As %Integer)
+{
+	if i>0
+	{	set ^ThreadPoolSettings("Settings","MinThreadNum") = i}
+	else 
+	{	set ^ThreadPoolSettings("Settings","MinThreadNum") = 1}
+}
+
+ClassMethod SetDynamicThreadLifeTime(i As %Integer)
+{
+	if i>0
+	{	set ^ThreadPoolSettings("Settings","DynamicThreadLifeTime") = i}
+	else 
+	{	set ^ThreadPoolSettings("Settings","DynamicThreadLifeTime") = 1000}
+}
+
+ClassMethod JobsStart()
+{
+	WHILE ^ThreadPoolData("stop")'="STOP" 
+		{
+			set reqResultSet = ##class(%ResultSet).%New()
+	 		set reqResultSet.ClassName = "ThreadPool.Request"
+	 		set reqResultSet.QueryName = "GetWaiting"
+	 		$$$TOE(sc, reqResultSet.Execute())	 		 	
+	 	
+		 	while reqResultSet.Next()
+		 	{
+			 	set id = reqResultSet.%Get("ID")
+			 	JOB $CLASSMETHOD("ThreadPool.Handler","JobForEach",id)::10			 	
+			 	
+		 		
+		 	}
+	 		HANG 10
+		}
+}
+
+}

@@ -1,0 +1,822 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Export generator="Cache" version="25" zv="Cache for Windows (x86-64) 2014.1.2 (Build 753U)" ts="2015-05-04 20:37:03">
+<Class name="ThreadPool.Handler">
+<Super>%RegisteredObject</Super>
+<TimeChanged>63625,80267.183379</TimeChanged>
+<TimeCreated>63597,75558.833612</TimeCreated>
+
+<UDLText name="T">
+<Content><![CDATA[
+// Метод динамического управления процессами
+
+]]></Content>
+</UDLText>
+
+<Method name="JobManaging">
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	set n = 0
+	set n1 = 0
+	set n2 = 0
+	FOR
+	{
+		
+		//if (((n2<n1)&&(n1<n)) ||((n2=n1)&&(n1<n))||((n2<n1)&&(n1=n))||((n>n1)||(n>n2)))
+		if (n2<((n1+n)/2))
+		{
+			if (^ThreadPoolData("ThreadsCount")<^ThreadPoolSettings("Settings","MaxThreadNum"))
+			{
+				JOB $CLASSMETHOD("ThreadPool.Handler","JobStack",1)::10
+				LOCK +^ThreadPoolData("ThreadsCount")
+				set ^ThreadPoolData("ThreadsCount") = ^ThreadPoolData("ThreadsCount")+1
+				LOCK -^ThreadPoolData("ThreadsCount")
+			}
+		}
+		
+		H 5
+		set n2 = n1
+		set n1 = n
+		set n = ^ThreadPoolData("TasksCount")
+		
+	}
+]]></Implementation>
+</Method>
+
+<UDLText name="T">
+<Content><![CDATA[
+// метод для обработки очередью
+
+]]></Content>
+</UDLText>
+
+<Method name="JobStack">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>dyn:%Integer</FormalSpec>
+<Implementation><![CDATA[
+	
+	Set reqId = ""
+		For {
+			QUIT:^ThreadPoolData("stop")="STOP"
+			set reqId = ##class(ThreadPool.Handler).WaitTask(dyn)
+			if reqId = -1
+			{
+				q
+			}
+			
+			do ##class(ThreadPool.Handler).JobForEach(reqId)		
+			
+			
+		}
+]]></Implementation>
+</Method>
+
+<UDLText name="T">
+<Content><![CDATA[
+// Метод полученя id задачи из очереди
+
+]]></Content>
+</UDLText>
+
+<Method name="WaitTask">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>dyn:%Integer</FormalSpec>
+<ReturnType>%Integer</ReturnType>
+<Implementation><![CDATA[
+	set resId = ""
+	set attempt = 0
+	set selfkill = 0
+	for
+	{
+		if (dyn = 1)&&(attempt>^ThreadPoolSettings("Settings","DynamicThreadLifeTime"))
+		{
+			set selfkill = 1
+				
+		}
+		quit:(dyn = 1)&&(attempt>^ThreadPoolSettings("Settings","DynamicThreadLifeTime"))
+		QUIT:^ThreadPoolData("stop")="STOP"
+		LOCK +^ThreadPoolData("Tasks")
+		set id = $P(^ThreadPoolData("Tasks"),";",1)
+		if id'=""
+		{
+			set ^ThreadPoolData("Tasks") = $REPLACE(^ThreadPoolData("Tasks"),id_";","",1)
+			set resId = id
+			LOCK +^ThreadPoolData("TasksCount")
+			set ^ThreadPoolData("TasksCount") = ^ThreadPoolData("TasksCount") -1
+			LOCK -^ThreadPoolData("TasksCount")
+		}
+		LOCK -^ThreadPoolData("Tasks")
+		Quit:id'=""
+		H 0.001
+		set attempt = attempt+1
+	}
+	if (selfkill = 1)
+	{
+		LOCK +^ThreadPoolData("ThreadsCount")
+		set ^ThreadPoolData("ThreadsCount") = ^ThreadPoolData("ThreadsCount")-1
+		LOCK -^ThreadPoolData("ThreadsCount")
+		q -1
+	}
+	q resId
+]]></Implementation>
+</Method>
+
+<UDLText name="T">
+<Content><![CDATA[
+// Метод управления очередью задач
+
+]]></Content>
+</UDLText>
+
+<Method name="StackManage">
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+		
+	set ^ThreadPoolData("Tasks") = "" 
+	
+	set errlog = ""
+	set ^ThreadPoolData("stop") = ""
+		while ^ThreadPoolData("stop")'= "STOP"
+		{
+			try
+			{
+				set reqResultSet = ##class(%ResultSet).%New()
+	 			set reqResultSet.ClassName = "ThreadPool.Request"
+	 			set reqResultSet.QueryName = "GetWaiting"
+	 			set newTasks = ""
+	 			$$$TOE(sc, reqResultSet.Execute())
+	 			set count = 0
+	 			while reqResultSet.Next()
+	 			{
+		 			set id = reqResultSet.Get("ID")
+		 			set newTasks = newTasks_id_";"
+		 			set req = ##class(ThreadPool.Request).%OpenId(id)
+		 			set req.RequestStatus = "IN_STACK"	
+		 			$$$TOE(sc, req.%Save())	 	
+		 			set count = count+1		
+	 			}
+	 			
+	 			
+	 			
+	 			L +^ThreadPoolData("Tasks")
+	 			set ^ThreadPoolData("Tasks") = ^ThreadPoolData("Tasks")_newTasks
+	 			L -^ThreadPoolData("Tasks")
+	 			
+	 			L +^ThreadPoolData("TasksCount")
+	 			set ^ThreadPoolData("TasksCount") = ^ThreadPoolData("TasksCount")+count
+	 			L -^ThreadPoolData("TasksCount")
+	 			
+	 			H 10
+			}
+			catch ex
+			{
+				set errlog =" "_errlog_ex.Data()
+			} 
+		}
+		q errlog
+]]></Implementation>
+</Method>
+
+<UDLText name="T">
+<Content><![CDATA[
+// Метод обработки с вызовом процесса для каждой задачи
+
+]]></Content>
+</UDLText>
+
+<Method name="JobForEach">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>reqId:%Integer</FormalSpec>
+<Implementation><![CDATA[
+		try
+		{		
+			set req = ##class(ThreadPool.Request).%OpenId(reqId)
+		
+			tstart
+			set req.RequestStatus = "RUNNING"
+			$$$TOE(sc, req.%Save())		
+			tcommit
+		
+		
+			set req.Result =##class(ThreadPool.Handler).Count(req.RequestString)
+			set req.HandledTime = $HOROLOG
+			tstart		
+			set req.RequestStatus = "READY"
+			$$$TOE(sc, req.%Save())	
+			tcommit
+		
+		
+		}
+		catch ex 
+		{
+			trollback
+			
+			set req.RequestStatus = "READY_WITH_ERROR"
+			set req.ErrorData = ex.Data()
+
+		}
+]]></Implementation>
+</Method>
+
+<UDLText name="T">
+<Content><![CDATA[
+// Метод обработки с вызовом одного процесса для всех задач
+
+]]></Content>
+</UDLText>
+
+<Method name="JobForAll">
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	 	WHILE ^ThreadPoolData("stop")'="STOP" { 
+	 		set reqResultSet = ##class(%ResultSet).%New()
+	 		set reqResultSet.ClassName = "ThreadPool.Request"
+	 		set reqResultSet.QueryName = "GetWaiting"
+	 		
+	 		TRY
+	 		{
+		 		$$$TOE(sc,reqResultSet.Execute())
+		 		while reqResultSet.Next()
+		 		{
+			 		set id = reqResultSet.%Get("ID")
+			 				 	
+			 		try
+			 		{			 		
+			 			set req = ##class(ThreadPool.Request).%OpenId(id)			 	
+				
+						tstart
+						set req.RequestStatus = "RUNNING"	
+						$$$TOE(sc, req.%Save()) 
+						tcommit
+					
+						
+						set req.Result = ##class(ThreadPool.Handler).Count(req.RequestString)			 	
+			 			set req.RequestStatus = "READY"
+			 			set req.HandledTime = $HOROLOG
+			 			tstart
+						$$$TOE(sc, req.%Save())
+						tcommit
+			 		}
+			 		catch ex 
+			 		{
+				 		trollback
+
+						
+						set req.RequestStatus = "READY_WITH_ERROR"
+						set req.ErrorData = ex.Data()
+
+					
+			 		}
+			 	
+		 		}
+	 		}
+	 		catch ex
+	 		{
+
+				set ^ThreadPoolData("ErrorLog") = ^ThreadPoolData("ErrorLog")_" "_ex.Data()
+
+	 		}
+	 		HANG 5
+	 	}
+]]></Implementation>
+</Method>
+
+<UDLText name="T">
+<Content><![CDATA[
+// считает факториал
+
+]]></Content>
+</UDLText>
+
+<Method name="Count">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>N:%Integer</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	set fact = ##class(%ListOfDataTypes).%New()		
+	set base = 10000000000
+		do fact.Insert(1)
+		
+	
+		do fact.Insert(0)
+	
+	
+	
+	For k=1:1:N
+	{
+	
+	
+		set carry = 0
+	
+	
+		For i = 0:1:fact.Size
+		{
+			if i = fact.Size
+			{
+				do fact.Insert(0)
+			}
+			set cur =  fact.GetAt(i) * 1 * k + carry
+			do fact.SetAt(cur#base,i)
+			set carry = cur\base
+		
+	}
+	
+	}
+	
+	
+	set i = fact.Size
+	Do
+	{
+		do fact.RemoveAt(i)
+		set i = i-1
+	}
+	While fact.GetAt(i) = 0
+	
+	
+	
+	set ret = ""
+	For i = fact.Size:-1:1
+	{
+		set a = ""
+		for j = 1:1:10-$LENGTH(fact.GetAt(i))
+		{
+			set a = a_"0"
+		}
+		set a = a_fact.GetAt(i)
+		set ret = ret_a
+	}
+	q ret
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="ThreadPool.Request">
+<Super>%Persistent,%XML.Adaptor</Super>
+<TimeChanged>63597,76852.860284</TimeChanged>
+<TimeCreated>63597,75558.356221</TimeCreated>
+
+<Property name="RequestString">
+<Type>%String</Type>
+<Parameter name="TRUNCATE" value="1"/>
+</Property>
+
+<Property name="RequestStatus">
+<Type>%String</Type>
+<Parameter name="TRUNCATE" value="1"/>
+<Parameter name="VALUELIST" value=",WAITING,IN_STACK,RUNNING,READY,READY_WITH_ERROR"/>
+<Parameter name="XMLPROJECTION" value="ELEMENT"/>
+</Property>
+
+<Property name="AddedTime">
+<Type>%String</Type>
+</Property>
+
+<Property name="HandledTime">
+<Type>%String</Type>
+</Property>
+
+<Property name="ErrorData">
+<Type>%String</Type>
+</Property>
+
+<Property name="Result">
+<Type>%String</Type>
+<Parameter name="MAXLEN"/>
+</Property>
+
+<Query name="GetWaiting">
+<Type>%SQLQuery</Type>
+<SqlProc>1</SqlProc>
+<SqlQuery>SELECT %ID FROM Request
+ WHERE (RequestStatus = 'WAITING')
+ ORDER BY %ID</SqlQuery>
+<Parameter name="CONTAINID" value="1"/>
+</Query>
+
+<Storage name="Default">
+<Type>%Library.CacheStorage</Type>
+<DataLocation>^ThreadPool.RequestD</DataLocation>
+<DefaultData>RequestDefaultData</DefaultData>
+<IdLocation>^ThreadPool.RequestD</IdLocation>
+<IndexLocation>^ThreadPool.RequestI</IndexLocation>
+<StreamLocation>^ThreadPool.RequestS</StreamLocation>
+<ExtentSize>100000</ExtentSize>
+<Data name="RequestDefaultData">
+<Value name="1">
+<Value>%%CLASSNAME</Value>
+</Value>
+<Value name="2">
+<Value>RequestString</Value>
+</Value>
+<Value name="3">
+<Value>RequestStatus</Value>
+</Value>
+<Value name="4">
+<Value>AddedTime</Value>
+</Value>
+<Value name="5">
+<Value>HandledTime</Value>
+</Value>
+<Value name="6">
+<Value>ErrorData</Value>
+</Value>
+<Value name="7">
+<Value>Result</Value>
+</Value>
+</Data>
+</Storage>
+</Class>
+
+
+<Class name="ThreadPool.ThreadPool">
+<Super>%RegisteredObject</Super>
+<TimeChanged>63607,75525.880526</TimeChanged>
+<TimeCreated>63597,75559.152675</TimeCreated>
+
+<Method name="Start">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	
+	   if ^ThreadPoolData("Initialized") '= 1 
+	  { q "Pool isn't initialized" }
+	   set ^ThreadPoolData("stop") = ""
+	   w "Done"
+	   
+	   
+	if ^ThreadPoolSettings("Settings","Reaction") = 2
+	{
+	if ^ThreadPoolSettings("Settings","MethodNumber") = 1
+	{
+		
+		JOB $CLASSMETHOD("ThreadPool.ThreadPool","JobsStart")::10
+		if $TEST = 0
+			{
+				q "job did not run"
+				
+			}
+		  	set ^ThreadPoolData("pid") = $ZCHILD
+		 	q "Done"
+		 		
+
+	}
+	
+	if ^ThreadPoolSettings("Settings","MethodNumber") = 2
+	{
+		
+		if $DATA(^$JOB(^ThreadPoolData("pid"))) = 0
+	 	{
+		 	LOCK ^JL
+		 	JOB $CLASSMETHOD("ThreadPool.Handler","JobForAll")::10
+		
+		 
+		 	if $TEST = 0
+			{
+				q "job did not run"
+				LOCK
+			}
+		  	set ^ThreadPoolData("pid") = $ZCHILD
+		 	q "Done"
+		 	LOCK		 
+		 
+	 	}
+	 	q "Handler is already created"
+	}
+	
+	if ^ThreadPoolSettings("Settings","MethodNumber") = 3{
+	JOB $CLASSMETHOD("ThreadPool.Handler","StackManage")::10
+	
+	
+	if ^ThreadPoolSettings("Settings","DynamicManaging") = 0{
+	FOR i = 1:1:^ThreadPoolSettings("Settings","ThreadsNum")
+	{
+		JOB $CLASSMETHOD("ThreadPool.Handler","JobStack",0)::10
+	}
+	}
+	
+	if ^ThreadPoolSettings("Settings","DynamicManaging") = 1
+	{
+	set ^ThreadPoolData("ThreadsCount") = 0
+	set ^ThreadPoolData("TasksCount") = 0	
+	FOR i = 1:1:^ThreadPoolSettings("Settings","MinThreadNum")
+	{
+		JOB $CLASSMETHOD("ThreadPool.Handler","JobStack",1)::10
+	}
+	
+	LOCK +^ThreadPoolData("ThreadsCount")
+	set ^ThreadPoolData("ThreadsCount") = ^ThreadPoolData("ThreadsCount")+^ThreadPoolSettings("Settings","MinThreadNum")
+	LOCK -^ThreadPoolData("ThreadsCount")
+	JOB $CLASSMETHOD("ThreadPool.Handler","JobManaging")::10
+	
+	}
+	
+	
+	
+	
+	}
+	
+	}
+	else 
+	{
+		q "Error. Bad reaction"
+	}
+]]></Implementation>
+</Method>
+
+<Method name="Stop">
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[	   set ^ThreadPoolData("stop") = "STOP"
+]]></Implementation>
+</Method>
+
+<Method name="SetReaction">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>rnum:%Integer</FormalSpec>
+<Implementation><![CDATA[
+	if (rnum>0) && (rnum<4){
+		set ^ThreadPoolSettings("Settings","Reaction") = rnum}
+	else {
+		set ^ThreadPoolSettings("Settings","Reaction") = 1}
+]]></Implementation>
+</Method>
+
+<Method name="SetMethod">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>mnum:%Integer</FormalSpec>
+<Implementation><![CDATA[
+	if (mnum>0) && (mnum<4)
+	{	set ^ThreadPoolSettings("Settings","MethodNumber") = mnum}
+	else 
+		{set ^ThreadPoolSettings("Settings","MethodNumber") = 1}
+]]></Implementation>
+</Method>
+
+<Method name="Initialize">
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+		set ^ThreadPoolData("stop") = "STOP"
+		set ^ThreadPoolSettings("Settings","MethodNumber") = 1
+		set ^ThreadPoolSettings("Settings","Reaction") = 0
+		set ^ThreadPoolSettings("Settings","ThreadsNum") = 1
+		set ^ThreadPoolData("Log") = ""
+		set ^ThreadPoolData("ErrorLog") = ""
+		set ^ThreadPoolData("pid") = 0 
+		set ^ThreadPoolData("Initialized") = 1
+		set ^ThreadPoolData("Tasks") = ""
+		set ^ThreadPoolData("TasksCount") = 0
+		set ^ThreadPoolData("ThreadsCount") = 0
+		set ^ThreadPoolData("ThreadsCount") = 0
+		set ^ThreadPoolSettings("Settings","MinThreadNum") = 1
+		set ^ThreadPoolSettings("Settings","MaxThreadNum") = 1
+		set ^ThreadPoolSettings("Settings","DynamicThreadLifeTime") = 1000
+]]></Implementation>
+</Method>
+
+<Method name="SetThreadsNum">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>tnum:%Integer</FormalSpec>
+<Implementation><![CDATA[
+	if tnum>0
+	{	set ^ThreadPoolSettings("Settings","ThreadsNum") = tnum}
+	else 
+	{	set ^ThreadPoolSettings("Settings","ThreadsNum") = 1}
+]]></Implementation>
+</Method>
+
+<Method name="SetDynamicThreadManaging">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>i:%Integer</FormalSpec>
+<Implementation><![CDATA[
+	if (i=0)||(i=1)
+	{	set ^ThreadPoolSettings("Settings","DynamicManaging") = i}
+	else 
+	{	set ^ThreadPoolSettings("Settings","DynamicManaging") = 0}
+]]></Implementation>
+</Method>
+
+<Method name="SetMaximumThreadsNum">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>i:%Integer</FormalSpec>
+<Implementation><![CDATA[
+	if i>0
+	{	set ^ThreadPoolSettings("Settings","MaxThreadNum") = i}
+	else 
+	{	set ^ThreadPoolSettings("Settings","MaxThreadNum") = 1}
+]]></Implementation>
+</Method>
+
+<Method name="SetMinimumThreadsNum">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>i:%Integer</FormalSpec>
+<Implementation><![CDATA[
+	if i>0
+	{	set ^ThreadPoolSettings("Settings","MinThreadNum") = i}
+	else 
+	{	set ^ThreadPoolSettings("Settings","MinThreadNum") = 1}
+]]></Implementation>
+</Method>
+
+<Method name="SetDynamicThreadLifeTime">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>i:%Integer</FormalSpec>
+<Implementation><![CDATA[
+	if i>0
+	{	set ^ThreadPoolSettings("Settings","DynamicThreadLifeTime") = i}
+	else 
+	{	set ^ThreadPoolSettings("Settings","DynamicThreadLifeTime") = 1000}
+]]></Implementation>
+</Method>
+
+<Method name="JobsStart">
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	WHILE ^ThreadPoolData("stop")'="STOP" 
+		{
+			set reqResultSet = ##class(%ResultSet).%New()
+	 		set reqResultSet.ClassName = "ThreadPool.Request"
+	 		set reqResultSet.QueryName = "GetWaiting"
+	 		$$$TOE(sc, reqResultSet.Execute())	 		 	
+	 	
+		 	while reqResultSet.Next()
+		 	{
+			 	set id = reqResultSet.%Get("ID")
+			 	JOB $CLASSMETHOD("ThreadPool.Handler","JobForEach",id)::10			 	
+			 	
+		 		
+		 	}
+	 		HANG 10
+		}
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="ThreadPool.ThreadPoolService">
+<Description>
+ThreadPool.ThreadPoolService</Description>
+<ProcedureBlock>1</ProcedureBlock>
+<Super>%SOAP.WebService</Super>
+<TimeChanged>63625,41888.61433</TimeChanged>
+<TimeCreated>63597,75558.003207</TimeCreated>
+
+<Parameter name="SERVICENAME">
+<Description>
+ Имя Веб-Сервиса.</Description>
+<Default>ThreadPoolService</Default>
+</Parameter>
+
+<Parameter name="NAMESPACE">
+<Description>
+TODO: change this to actual SOAP namespace.
+Область SOAP для Веб-Сервиса</Description>
+<Default>http://tempuri.org</Default>
+</Parameter>
+
+<Parameter name="USECLASSNAMESPACES">
+<Description>
+Пространство имен задействованных классов будет использовано в WSDL.</Description>
+<Default>1</Default>
+</Parameter>
+
+<Method name="GetRId">
+<FormalSpec>ReqString:%String</FormalSpec>
+<ReturnType>%String</ReturnType>
+<WebMethod>1</WebMethod>
+<Implementation><![CDATA[
+	if ^ThreadPoolData("Initialized") '= 1 
+	{
+	   q "Pool isn't initialized"
+	}
+	set result = ""
+	try
+	{
+		set req = ##class(ThreadPool.Request).%New()
+		set req.RequestString = ReqString
+		set req.RequestStatus = "WAITING"
+		set req.AddedTime = $HOROLOG
+		tstart		
+		
+		$$$TOE(sc, req.%Save())
+		
+		set result = req.%Id()
+		tcommit
+		
+		if ^ThreadPoolSettings("Settings","Reaction") = 1
+		{
+		JOB $CLASSMETHOD("ThreadPool.Handler","JobForEach",req.%Id())::10
+		}
+	}
+	catch ex
+	{
+		trollback
+		do ..ReturnFault(..MakeStatusFault(ex.AsStatus()))
+	}
+	quit result
+]]></Implementation>
+</Method>
+
+<Method name="Status">
+<FormalSpec>id:%Integer</FormalSpec>
+<ReturnType>%String</ReturnType>
+<WebMethod>1</WebMethod>
+<Implementation><![CDATA[
+	set res = ""	
+	try
+	{
+		set req = ##class(ThreadPool.Request).%OpenId(id)
+		if req = ""
+		{
+			THROW ##class(%Exception.General).%New("<BAD OID>","001",,"Object with id = "_id_" wasn't found")
+		}
+		set res = req.RequestStatus
+		
+	} 
+	catch ex
+	{
+		
+			set detail=ex.Data
+        	set fault=..MakeFault($$$FAULTServer,"Status error",detail)
+		
+		
+		do ..ReturnFault(fault)		
+	}
+	
+	q res
+]]></Implementation>
+</Method>
+
+<Method name="Result">
+<FormalSpec>id:%Integer</FormalSpec>
+<ReturnType>%String</ReturnType>
+<WebMethod>1</WebMethod>
+<Implementation><![CDATA[
+	set res = ""	
+	try
+	{
+		set req = ##class(ThreadPool.Request).%OpenId(id)
+		if req = ""
+		{
+			THROW ##class(%Exception.General).%New("<BAD OID>","001",,"Object with id = "_id_" wasn't found")
+		}
+		if req.RequestStatus="READY"
+		{
+			set res = req.Result
+		}
+		else 
+		{
+			THROW ##class(%Exception.General).%New("<BAD STATUS>","002",,"Object with id = "_id_" isn't ready")
+		}			
+		
+	} 
+	catch ex
+	{
+		
+			set detail=ex.Data     	
+		
+		
+		set fault=..MakeFault($$$FAULTServer,"Result error",detail)
+		do ..ReturnFault(fault)		
+	}
+	q res
+]]></Implementation>
+</Method>
+
+<Method name="GetFullRequest">
+<FormalSpec>id:%Integer</FormalSpec>
+<ReturnType>ThreadPool.Request</ReturnType>
+<WebMethod>1</WebMethod>
+<Implementation><![CDATA[
+	set res = ""	
+	try
+	{
+		set req = ##class(ThreadPool.Request).%OpenId(id)
+		if req = ""
+		{
+			THROW ##class(%Exception.General).%New("<BAD OID>","001",,"Object with id = "_id_" wasn't found")
+		}
+
+			set res = req
+			
+		
+	} 
+	catch ex
+	{
+		
+			set detail=ex.Data()     	
+		
+		
+		set fault=..MakeFault($$$FAULTServer,"Result error",detail)
+		do ..ReturnFault(fault)		
+	}
+	q res
+]]></Implementation>
+</Method>
+
+<Method name="GetProcTaskData">
+<ReturnType>%String</ReturnType>
+<WebMethod>1</WebMethod>
+<Implementation><![CDATA[	q ^ThreadPoolData("ThreadsCount")_","_^ThreadPoolData("TasksCount")
+]]></Implementation>
+</Method>
+</Class>
+</Export>
